@@ -1,0 +1,384 @@
+--[[
+    Standalone Murder Mystery 2 Script - YARHM UI Edition
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+--// Settings & Roles
+local Settings = {
+    RoleESP = false,
+    GunESP = false,
+    TrapESP = false,
+}
+
+local Roles = {
+    Murderer = nil,
+    Sheriff = nil,
+    Hero = nil,
+}
+
+--// YARHM UI Colors & Fonts
+local C_BG = Color3.fromRGB(20, 20, 20)
+local C_Sidebar = Color3.fromRGB(15, 15, 15)
+local C_Button_Dark = Color3.fromRGB(25, 25, 25)
+local C_Button_Active = Color3.fromRGB(255, 255, 255)
+local C_Text_White = Color3.fromRGB(255, 255, 255)
+local C_Text_Black = Color3.fromRGB(0, 0, 0)
+local C_Red = Color3.fromRGB(255, 50, 50)
+local C_Blue = Color3.fromRGB(50, 100, 255)
+local C_Green = Color3.fromRGB(50, 200, 50)
+
+--// Clean existing GUI
+local GuiName = "YARHM_Standalone_Gui"
+if CoreGui:FindFirstChild(GuiName) then
+    CoreGui[GuiName]:Destroy()
+end
+
+--// ScreenGui Setup
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = GuiName
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = CoreGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 500, 0, 320)
+MainFrame.Position = UDim2.new(0.5, -250, 0.5, -160)
+MainFrame.BackgroundColor3 = C_BG
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 10)
+UICorner.Parent = MainFrame
+
+--// Top Bar (For Dragging)
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1, 0, 0, 30)
+TopBar.BackgroundTransparency = 1
+TopBar.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(0, 150, 1, 0)
+TitleLabel.Position = UDim2.new(0, 15, 0, 5)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "YARHM 1.20"
+TitleLabel.TextColor3 = C_Text_White
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 18
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TopBar
+
+local SubTitle = Instance.new("TextLabel")
+SubTitle.Size = UDim2.new(0, 200, 1, 0)
+SubTitle.Position = UDim2.new(1, -215, 0, 5)
+SubTitle.BackgroundTransparency = 1
+SubTitle.Text = "yet another random hub menu"
+SubTitle.TextColor3 = C_Text_White
+SubTitle.Font = Enum.Font.GothamSemibold
+SubTitle.TextSize = 12
+SubTitle.TextXAlignment = Enum.TextXAlignment.Right
+SubTitle.Parent = TopBar
+
+-- Dragging Logic
+local dragging, dragInput, dragStart, startPos
+TopBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+TopBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+--// Sidebar
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.new(0, 150, 1, -40)
+Sidebar.Position = UDim2.new(0, 10, 0, 40)
+Sidebar.BackgroundColor3 = C_Sidebar
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainFrame
+
+local SidebarCorner = Instance.new("UICorner")
+SidebarCorner.CornerRadius = UDim.new(0, 8)
+SidebarCorner.Parent = Sidebar
+
+local SidebarList = Instance.new("UIListLayout")
+SidebarList.Padding = UDim.new(0, 10)
+SidebarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SidebarList.VerticalAlignment = Enum.VerticalAlignment.Center
+SidebarList.Parent = Sidebar
+
+local function CreateTab(name, active)
+    local Tab = Instance.new("TextButton")
+    Tab.Size = UDim2.new(0, 130, 0, 45)
+    Tab.BackgroundColor3 = active and C_Button_Active or C_Sidebar
+    Tab.BackgroundTransparency = active and 0 or 1
+    Tab.Text = name
+    Tab.TextColor3 = active and C_Text_Black or C_Text_White
+    Tab.Font = Enum.Font.GothamSemibold
+    Tab.TextSize = 13
+    Tab.Parent = Sidebar
+
+    local TabCorner = Instance.new("UICorner")
+    TabCorner.CornerRadius = UDim.new(0, 8)
+    TabCorner.Parent = Tab
+end
+
+CreateTab("Universal", false)
+CreateTab("Murder Mystery 2", true)
+CreateTab("Forsaken", false)
+
+--// Main Content Area
+local ContentArea = Instance.new("ScrollingFrame")
+ContentArea.Size = UDim2.new(1, -180, 1, -40)
+ContentArea.Position = UDim2.new(0, 170, 0, 40)
+ContentArea.BackgroundTransparency = 1
+ContentArea.BorderSizePixel = 0
+ContentArea.ScrollBarThickness = 2
+ContentArea.CanvasSize = UDim2.new(0, 0, 0, 400)
+ContentArea.Parent = MainFrame
+
+local ContentLayout = Instance.new("UIListLayout")
+ContentLayout.Padding = UDim.new(0, 8)
+ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ContentLayout.Parent = ContentArea
+
+--// UI Creation Helpers
+local function AddSectionHeader(title)
+    local Header = Instance.new("TextLabel")
+    Header.Size = UDim2.new(1, 0, 0, 25)
+    Header.BackgroundTransparency = 1
+    Header.Text = title
+    Header.TextColor3 = C_Text_White
+    Header.Font = Enum.Font.GothamBold
+    Header.TextSize = 16
+    Header.TextXAlignment = Enum.TextXAlignment.Left
+    Header.Parent = ContentArea
+end
+
+local function CreateButton(text, parent, size, callback)
+    local Btn = Instance.new("TextButton")
+    Btn.Size = size or UDim2.new(1, -10, 0, 35)
+    Btn.BackgroundColor3 = C_Button_Dark
+    Btn.Text = text
+    Btn.TextColor3 = C_Text_White
+    Btn.Font = Enum.Font.GothamBold
+    Btn.TextSize = 14
+    Btn.Parent = parent
+
+    local BtnCorner = Instance.new("UICorner")
+    BtnCorner.CornerRadius = UDim.new(0, 6)
+    BtnCorner.Parent = Btn
+
+    Btn.MouseButton1Click:Connect(function()
+        if callback then callback(Btn) end
+    end)
+    return Btn
+end
+
+local function CreateGrid(parent)
+    local GridFrame = Instance.new("Frame")
+    GridFrame.Size = UDim2.new(1, -10, 0, 35)
+    GridFrame.BackgroundTransparency = 1
+    GridFrame.Parent = parent
+    
+    local Grid = Instance.new("UIGridLayout")
+    Grid.CellSize = UDim2.new(0, 145, 0, 35)
+    Grid.CellPadding = UDim2.new(0, 10, 0, 10)
+    Grid.SortOrder = Enum.SortOrder.LayoutOrder
+    Grid.Parent = GridFrame
+    
+    return GridFrame
+end
+
+--// Constructing the UI matching YARHM
+AddSectionHeader("ESPs")
+
+local ESPGrid1 = CreateGrid(ContentArea)
+CreateButton("Players", ESPGrid1, nil, function(btn)
+    Settings.RoleESP = not Settings.RoleESP
+    btn.BackgroundColor3 = Settings.RoleESP and Color3.fromRGB(50, 50, 50) or C_Button_Dark
+end)
+CreateButton("Traps", ESPGrid1, nil, function(btn)
+    Settings.TrapESP = not Settings.TrapESP
+    btn.BackgroundColor3 = Settings.TrapESP and Color3.fromRGB(50, 50, 50) or C_Button_Dark
+end)
+
+local ESPGrid2 = CreateGrid(ContentArea)
+CreateButton("Dropped Gun", ESPGrid2, nil, function(btn)
+    Settings.GunESP = not Settings.GunESP
+    btn.BackgroundColor3 = Settings.GunESP and Color3.fromRGB(50, 50, 50) or C_Button_Dark
+end)
+ESPGrid2.Size = UDim2.new(1, -10, 0, 40) -- Spacer
+
+AddSectionHeader("Tools")
+
+--// Utility logic
+local function GetPing()
+    local stats = game:GetService("Stats")
+    local network = stats:FindFirstChild("Network")
+    if network and network:FindFirstChild("ServerStatsItem") and network.ServerStatsItem:FindFirstChild("Data Ping") then
+        return network.ServerStatsItem["Data Ping"]:GetValue()
+    end
+    return 100
+end
+
+local function ScanRolesLocally()
+    Roles.Murderer = nil
+    Roles.Sheriff = nil
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local bp = player:FindFirstChild("Backpack")
+            local char = player.Character
+
+            local possibleTools = {}
+            if bp then for _, t in pairs(bp:GetChildren()) do table.insert(possibleTools, t) end end
+            for _, t in pairs(char:GetChildren()) do table.insert(possibleTools, t) end
+
+            for _, tool in pairs(possibleTools) do
+                if tool:IsA("Tool") then
+                    if tool.Name == "Knife" or tool:FindFirstChild("KnifeClient") or tool:HasTag("Weapon_Knife") then
+                        Roles.Murderer = player
+                    elseif tool.Name == "Gun" or tool:FindFirstChild("GunClient") or tool:HasTag("Weapon_Gun") then
+                        Roles.Sheriff = player
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- The Non-Stop Shoot Murderer Button Logic
+CreateButton("Shoot murderer", ContentArea, UDim2.new(1, -10, 0, 35), function()
+    ScanRolesLocally()
+    
+    if Roles.Murderer and Roles.Murderer.Character then
+        local murdererChar = Roles.Murderer.Character
+        local murdererRoot = murdererChar:FindFirstChild("HumanoidRootPart")
+        local localChar = LocalPlayer.Character
+        local gun = localChar and localChar:FindFirstChild("Gun") or (LocalPlayer.Backpack:FindFirstChild("Gun"))
+        
+        if gun and murdererRoot and localChar then
+            -- Auto Equip Gun
+            if gun.Parent ~= localChar then
+                gun.Parent = localChar
+                task.wait(0.05) -- Tiny delay to ensure equip registers
+            end
+
+            -- Ensure we only shoot if equipped
+            if gun.Parent == localChar then
+                local pingSec = GetPing() / 1000
+                -- Predict position for hitscan accounting for ping
+                local predictedPos = murdererRoot.Position + (murdererRoot.AssemblyLinearVelocity * pingSec)
+                
+                -- Detect appropriate remote
+                local gunRemote = nil
+                if ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Gameplay") then
+                     gunRemote = ReplicatedStorage.Remotes.Gameplay:FindFirstChild("Shoot")
+                end
+                
+                local weaponEvents = ReplicatedStorage:FindFirstChild("WeaponEvents")
+                if weaponEvents and weaponEvents:FindFirstChild("Shoot") then
+                    gunRemote = weaponEvents.Shoot
+                end
+
+                -- Fallback to typical MM2 Shoot argument passing
+                if gunRemote then
+                    gunRemote:FireServer(1, predictedPos, "ah") -- Common signature
+                end
+            end
+        end
+    end
+end)
+
+CreateButton("Knife throw to closest (NEW)", ContentArea, UDim2.new(1, -10, 0, 35), function()
+    -- Placeholder for future Knife logic
+end)
+
+--// Rendering Loop for ESP
+local ESPCache = {}
+
+local function ClearESP(instance)
+    if ESPCache[instance] then
+        ESPCache[instance]:Destroy()
+        ESPCache[instance] = nil
+    end
+end
+
+local function DrawESP(instance, color, text)
+    if not instance then return end
+    if ESPCache[instance] then
+        ESPCache[instance].OutlineColor = color
+        ESPCache[instance].FillColor = color
+        return
+    end
+
+    local Highlight = Instance.new("Highlight")
+    Highlight.Name = "YARHM_ESP"
+    Highlight.Adornee = instance
+    Highlight.FillTransparency = 0.5
+    Highlight.OutlineTransparency = 0
+    Highlight.FillColor = color
+    Highlight.OutlineColor = color
+    Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    Highlight.Parent = CoreGui
+    ESPCache[instance] = Highlight
+end
+
+RunService.RenderStepped:Connect(function()
+    ScanRolesLocally()
+
+    -- Player ESP
+    if Settings.RoleESP then
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local char = player.Character
+                local espColor = C_Green
+                if player == Roles.Murderer then espColor = C_Red
+                elseif player == Roles.Sheriff then espColor = C_Blue end
+                DrawESP(char, espColor, player.Name)
+            else
+                ClearESP(player.Character)
+            end
+        end
+    else
+        for _, player in pairs(Players:GetPlayers()) do
+            ClearESP(player.Character)
+        end
+    end
+
+    -- Gun / Trap ESP
+    if Settings.GunESP or Settings.TrapESP then
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj.Name == "GunDrop" and Settings.GunESP then
+                DrawESP(obj, Color3.fromRGB(255, 255, 0), "Gun")
+            elseif obj:IsA("Part") and obj.Name == "TrapVisual" and Settings.TrapESP then
+                DrawESP(obj, Color3.fromRGB(200, 100, 255), "Trap")
+            end
+        end
+    end
+end)
+
+print("YARHM Replica Loaded Successfully!")
