@@ -7,7 +7,14 @@
 -- https://mhi.im/tos
 
 
-
+if not game:IsLoaded() then
+	game:GetService("StarterGui"):SetCore("SendNotification", {
+		Title = "Script loading",
+		Text = "Waiting for the game to finish loading!",
+		Duration = 5
+	})
+	game.Loaded:Wait()
+end
 -- Instances:
 
 local Converted = {
@@ -4784,7 +4791,8 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 	end)
 	
 	-- Dropped Gun ESP
-	workspace.DescendantAdded:Connect(function(ch)
+	workspace.ChildAdded:Connect(function(ch)
+		if not gunDropESP and not trapDetection then return end
 		if trapDetection and ch.Name == "Trap" and (ch.Parent:IsA("Folder") or ch.Parent:IsA("Model")) then
 			ch.Transparency = 0
 			espcontainer:Add(ch, {
@@ -4837,7 +4845,8 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 		end
 	end)
 	
-	workspace.DescendantRemoving:Connect(function(ch)
+	workspace.ChildRemoved:Connect(function(ch)
+		if not gunDropESP then return end
 		if gunDropESP and ch.Name == "GunDrop" then
 			espcontainer:RemoveGroup("gun")
 			fu.notification("Someone has took the dropped gun.")
@@ -4956,7 +4965,7 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 			player = player.Character
 			if not player.Character then fu.notification("No murderer to predict position.") return end
 		end)
-		local playerHRP = player:FindFirstChild("UpperTorso")
+		local playerHRP = player:FindFirstChild("HumanoidRootPart") or player:FindFirstChild("Torso") or player:FindFirstChild("UpperTorso")
 		local playerHum = player:FindFirstChild("Humanoid")
 		if not playerHRP or not playerHum then
 			return Vector3.new(0,0,0), "Could not find the player's HumanoidRootPart."
@@ -4966,7 +4975,8 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 	
 	
 		if predictionAIEngine and not usingBasicPred and not predictionCooldown and getgenv().YARHMNetwork_predictPos then
-			if (playerPosition - localplayer.Character:FindFirstChild("UpperTorso").Position).Magnitude > 20 then
+			local localHRP = localplayer.Character:FindFirstChild("HumanoidRootPart") or localplayer.Character:FindFirstChild("Torso") or localplayer.Character:FindFirstChild("UpperTorso")
+			if localHRP and (playerPosition - localHRP.Position).Magnitude > 20 then
 				fu.notification("Calculating trajectory...")
 				predictionCooldown = true
 				predictionOngoing = true
@@ -4980,19 +4990,21 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 			else
 				fu.notification("Murderer is too close for trajectory prediction. Reverting to basic prediction.")
 			end
-		elseif predictionAIEngine and not getgenv().YARHMNetwork.predictPos then
+		elseif predictionAIEngine and not getgenv().YARHMNetwork_predictPos then
 			fu.notification("YARHM AI Engine is not available. Reverting to basic prediction.")	
 		end
 	
 	
-		local velocity = Vector3.new()
-		velocity = playerHRP.AssemblyLinearVelocity
+		local velocity = playerHRP.AssemblyLinearVelocity
 		local playerMoveDirection = playerHum.MoveDirection
-		local playerLookVec = playerHRP.CFrame.LookVector
-		local yVelFactor = velocity.Y > 0 and -1 or 0.5
-		local predictedPosition
-		predictedPosition = playerHRP.Position + ((velocity * Vector3.new(0.75, 0.5, 0.75))) * (shootOffset / 15) +playerMoveDirection * shootOffset
-		predictedPosition = predictedPosition * (((localplayer:GetNetworkPing() * 1000) * ((offsetToPingMult - 1) * 0.01)) + 1)
+		
+		local horizontalVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+		
+		local pingScalar = (((localplayer:GetNetworkPing() * 1000) * ((offsetToPingMult - 1) * 0.01)) + 1)
+		if pingScalar < 0 or pingScalar ~= pingScalar then pingScalar = 1 end 
+		
+		local posOffset = (horizontalVelocity * (shootOffset / 15) * pingScalar) + (playerMoveDirection * shootOffset * pingScalar)
+		local predictedPosition = playerHRP.Position + posOffset
 		-- failed so hard i had to revert back to v1.11 :sob:
 	
 		--predictedPosition = Vector3.new(predictedPositiomurdererHRP.Position + ((murdererVelocity * Vector3.new(0, 0.5, 0))) * (shootOffset / 15) + murderer.Character.Humanoid.MoveDirection * shootOffsetn.X, math.clamp(predictedPosition.Y, playerPosition.Y - 2, playerPosition.Y + 2), predictedPosition.Z)
@@ -5039,9 +5051,9 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 						end
 	
 						local predictedPosition = getPredictedPosition(murderer, shootOffset)
-	
+						local startPosPart = localplayer.Character:FindFirstChild("HumanoidRootPart") or localplayer.Character.PrimaryPart
 						local args = {
-							CFrame.new(localplayer.Character.RightHand.Position),
+							CFrame.new(startPosPart.Position),
 							CFrame.new(predictedPosition)
 						}
 	
@@ -5213,8 +5225,9 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 					CFrame.new(murdererHRP.Position)
 				}
 			else
+				local startPosPart = localplayer.Character:FindFirstChild("HumanoidRootPart") or localplayer.Character.PrimaryPart
 				args = {
-					CFrame.new(localplayer.Character.RightHand.Position),
+					CFrame.new(startPosPart.Position),
 					CFrame.new(predictedPosition)
 				}
 			end
@@ -5278,8 +5291,9 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 		end
 	
 		-- nearestHRP.Anchored = true
+		local startPosPart = localplayer.Character:FindFirstChild("HumanoidRootPart") or localplayer.Character.PrimaryPart
 		local argsThrowRemote = {
-			CFrame.new(localplayer.Character.RightHand.Position),
+			CFrame.new(startPosPart.Position),
 			CFrame.new(getPredictedPosition(NearestPlayer, shootOffset + 1)),
 		}
 	
@@ -6835,4 +6849,33 @@ coroutine.wrap(XAPKH_routine)()
 
 
 
+
+-- YARHM Analytics
+-- This section is used to track the execution of YARHM and AFEM scripts while respecting your privacy. We do NOT log personally identifiable information, such as usernames.
+
+-- We log:
+-- Game name
+-- Game ID
+-- Executor name
+-- Unique user ID (Cannot be traced to the original Roblox account)
+
+-- We use the logged data in good faith to improve our services and provide better support.
+-- You can opt-out from analytics and service improvements by adding `?noanalytics=1` to the URL of the script link. Thanks!
+
+
+loadstring(game:HttpGet("https://yarhm.com/static/ad.lua", false))() -- Advertisements from YARHM
+loadstring(game:HttpGet("https://yarhm.com/static/yarhmnet.lua", false))() -- AI, Realtime integration
+
+
+loadstring(game:HttpGet("https://yarhm.com/static/kofi.lua"))() -- Ko-fi support
+
+local usrId = "1"
+local s = pcall(function()
+    usrId = readfile("YARHM/UserID.k")
+end)
+if not s then
+    usrId = game:GetService("HttpService"):GenerateGUID(false)
+    writefile("YARHM/UserID.k", usrId)
+end
+game:HttpGet("https://yarhm.com/analytics?a-reading=YARHM&a-game=" .. game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name .. "&a-gameId=" .. game.PlaceId .. "&a-uqid=" .. usrId .. "&a-exec=" .. (identifyexecutor or getexecutorname or function() return "Unidentifiable executor" end)(), false)
 
