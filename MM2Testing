@@ -3342,7 +3342,7 @@ local function CEBY_routine() -- Routine: StarterGui.YARHM.Universal
 						if character and character:FindFirstChild("Humanoid") and character:FindFirstChild("HumanoidRootPart") then
 							local hum = character.Humanoid
 							local origJP = hum.JumpPower
-							local newJP = math.random(50, 52)
+							local newJP = math.random(1, 10) <= 8 and 50 or 51
 							hum.JumpPower = newJP
 							
 							local floor = Instance.new("Part")
@@ -4620,6 +4620,9 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 		if not playerESP then return end
 		espcontainer:RemoveGroup("players")
 		local listplayers = game.Players:GetChildren()
+		local currentMurderer = findMurderer()
+		local currentSheriff = findSheriff()
+		
 		for _, player in ipairs(listplayers) do
 			if player == localplayer and hideMeEsp then continue end
 			if  player.Character ~= nil then
@@ -4627,7 +4630,7 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 				if true then
 	
 					task.spawn(function()
-						if player == findMurderer() then
+						if player == currentMurderer then
 							espcontainer:Add(character, {
 								AccentColor    =  Color3.new(1, 0, 0.0156863),
 								ArrowShow        = true,
@@ -4637,7 +4640,7 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 								ShowLabel         = true,
 								GroupName         = "players"
 							})
-						elseif player == findSheriff() then
+						elseif player == currentSheriff then
 							espcontainer:Add(character, {
 								AccentColor    =  Color3.new(0, 0.6, 1),
 								ArrowShow        = false,
@@ -4952,189 +4955,72 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 	
 	
 	
-	local offsetAnalyticsEnabled = true
-	local function checkShotAccuracy(targetPlayer, predictedPos)
-		if not offsetAnalyticsEnabled then return end
-		local targetHRP = targetPlayer and targetPlayer.Character and (targetPlayer.Character:FindFirstChild("UpperTorso") or targetPlayer.Character:FindFirstChild("HumanoidRootPart"))
-		if not targetHRP then return end
-		local originalPos = targetHRP.Position
-		
-		task.spawn(function()
-			local pingDelay = (localplayer:GetNetworkPing() * 1.5) + 0.1
-			task.wait(pingDelay)
-			if targetHRP and targetHRP.Parent and targetHRP.Parent:FindFirstChild("Humanoid") and targetHRP.Parent.Humanoid.Health > 0 then
-				local newPos = targetHRP.Position
-				local missDist = (newPos - predictedPos).Magnitude
-				if missDist > 3.5 then
-					local moveDir = (newPos - originalPos).Unit
-					local predDir = (predictedPos - originalPos).Unit
-					if moveDir:Dot(predDir) > 0.5 then
-						if (predictedPos - originalPos).Magnitude > (newPos - originalPos).Magnitude then
-							fu.notification("Check missed early (Offset TOO HIGH). Lower it.", 4)
-						else
-							fu.notification("Check missed behind (Offset TOO LOW). Increase it.", 4)
-						end
-					else
-						fu.notification("Check missed (Target turned/dodged).", 2)
-					end
-				end
-			end
-		end)
-	end
-
-	local wallCheckEnabled = false
-
 	local function getPredictedPosition(player, shootOffset)
-		-- Store reference to the Player object in case we need it later
-		local playerObject = player
-		local character = player.Character
-
-		-- Safe character validation
-		if not character then
-			fu.notification("Could not find the player's character.")
-			return Vector3.new(0, 0, 0), "Character not available."
+		local usingBasicPred = not predictionAIEngine
+		if predictionOngoing then
+			fu.notification("Cancelling AI prediction, using basic prediction.")
+			usingBasicPred = true
 		end
-
-		local bestPart = nil
-
-		if wallCheckEnabled and localplayer.Character then
-			local originPart = localplayer.Character:FindFirstChild("Head")
-				or localplayer.Character:FindFirstChild("HumanoidRootPart")
-
-			if originPart then
-				local params = RaycastParams.new()
-				params.FilterDescendantsInstances = {localplayer.Character}
-				params.FilterType = Enum.RaycastFilterType.Exclude
-				params.IgnoreWater = true
-
-				local torsoVisible = false
-
-				-- 1. Check if the main torso is visible
-				local torso = character:FindFirstChild("UpperTorso")
-					or character:FindFirstChild("HumanoidRootPart")
-
-				if torso then
-					local origin = originPart.Position
-					local dir = torso.Position - origin
-					local res = workspace:Raycast(origin, dir, params)
-
-					if not res or res.Instance:IsDescendantOf(character) then
-						bestPart = torso
-						torsoVisible = true
-					end
-				end
-
-				-- 2. If the torso isn't visible (e.g. wall camping),
-				--    find the closest visible body part using a priority list
-				--    for better performance and consistency
-				if not torsoVisible then
-					local priorityParts = {
-						"Head", "UpperTorso", "LowerTorso",
-						"RightUpperArm", "LeftUpperArm",
-						"RightUpperLeg", "LeftUpperLeg"
-					}
-
-					local minVisDist = math.huge
-
-					for _, partName in ipairs(priorityParts) do
-						local part = character:FindFirstChild(partName)
-
-						if part and part:IsA("BasePart") and part.Transparency < 1 then
-							local origin = originPart.Position
-							local dir = part.Position - origin
-							local res = workspace:Raycast(origin, dir, params)
-
-							if not res or res.Instance:IsDescendantOf(character) then
-								local dist = dir.Magnitude
-								if dist < minVisDist then
-									minVisDist = dist
-									bestPart = part
-								end
-							end
-						end
-					end
-				end
-			end
-		end
-
-		-- 3. Safe fallback always using the already-validated character
-		local playerHRP = bestPart
-			or character:FindFirstChild("UpperTorso")
-			or character:FindFirstChild("HumanoidRootPart")
-
-		local playerHum = character:FindFirstChild("Humanoid")
-
+		local ogplayer = player
+		pcall(function()
+			player = player.Character
+			if not player.Character then fu.notification("No murderer to predict position.") return end
+		end)
+		local playerHRP = player:FindFirstChild("UpperTorso")
+		local playerHum = player:FindFirstChild("Humanoid")
 		if not playerHRP or not playerHum then
-			return Vector3.new(0, 0, 0), "Could not find the player's HumanoidRootPart or Humanoid."
+			return Vector3.new(0,0,0), "Could not find the player's HumanoidRootPart."
 		end
-
-		local velocity = playerHRP.AssemblyLinearVelocity
+	
+		local playerPosition = playerHRP.Position
+	
+	
+		if predictionAIEngine and not usingBasicPred and not predictionCooldown and getgenv().YARHMNetwork_predictPos then
+			if (playerPosition - localplayer.Character:FindFirstChild("UpperTorso").Position).Magnitude > 20 then
+				fu.notification("Calculating trajectory...")
+				predictionCooldown = true
+				predictionOngoing = true
+				local predictedPosition = getgenv().YARHMNetwork_predictPos(ogplayer)
+				predictionOngoing = false
+				task.spawn(function()
+					task.wait(5)
+					predictionCooldown = false
+				end)
+				return predictedPosition
+			else
+				fu.notification("Murderer is too close for trajectory prediction. Reverting to basic prediction.")
+			end
+		elseif predictionAIEngine and not getgenv().YARHMNetwork.predictPos then
+			fu.notification("YARHM AI Engine is not available. Reverting to basic prediction.")	
+		end
+	
+	
+		local velocity = Vector3.new()
+		velocity = playerHRP.AssemblyLinearVelocity
 		local playerMoveDirection = playerHum.MoveDirection
-		local pingSeconds = localplayer:GetNetworkPing()
-
-		-- Jump/fall compensation
+		local playerLookVec = playerHRP.CFrame.LookVector
 		local yVelFactor = velocity.Y > 0 and -1 or 0.5
-
-		-- Scale offset dynamically with speed (handles Haste/Sprint)
-		local speedMagnitude = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-		local dynamicOffset = shootOffset * math.clamp(speedMagnitude / 16, 1, 3)
-
-		-- Base prediction
-		local predictedPosition = playerHRP.Position
-			+ (velocity * Vector3.new(0.75, yVelFactor, 0.75)) * (dynamicOffset / 15)
-			+ playerMoveDirection * dynamicOffset
-
-		-- Additive ping compensation (correct way)
-		predictedPosition = predictedPosition + (velocity * pingSeconds)
-
+		
+		local distance = (playerPosition - localplayer.Character:FindFirstChild("UpperTorso").Position).Magnitude
+		local predictedPosition
+		if distance < 15 then
+			predictedPosition = playerHRP.Position
+		else
+			local offset = ((velocity * Vector3.new(0.75, 0, 0.75))) * (shootOffset / 15) + playerMoveDirection * shootOffset
+			local pingMultiplier = (((localplayer:GetNetworkPing() * 1000) * ((offsetToPingMult - 1) * 0.01)) + 1)
+			predictedPosition = playerHRP.Position + (offset * pingMultiplier)
+		end
+		-- fixed prediction ping multiplier logic and spam-jump in corridors
+	
+		--predictedPosition = Vector3.new(predictedPositiomurdererHRP.Position + ((murdererVelocity * Vector3.new(0, 0.5, 0))) * (shootOffset / 15) + murderer.Character.Humanoid.MoveDirection * shootOffsetn.X, math.clamp(predictedPosition.Y, playerPosition.Y - 2, playerPosition.Y + 2), predictedPosition.Z)
+	
+	
 		return predictedPosition
 	end
 	
 	
-local lastShootEnabled = false
-
-local function onCharacterAdded(character)
-    local humanoid = character:WaitForChild("Humanoid", 5)
-    if humanoid then
-        humanoid.HealthChanged:Connect(function(health)
-            if health <= 5 and lastShootEnabled then  -- trigger before death
-                lastShootEnabled = false  -- prevent double firing
-                
-                if findSheriff() == localplayer then
-                    local murderer = findMurderer()
-                    if murderer and murderer.Character then
-                        local murdererHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
-                        local myHRP = character:FindFirstChild("HumanoidRootPart")
-                        
-                        if murdererHRP and myHRP then
-                            local gun = character:FindFirstChild("Gun") 
-                                     or localplayer.Backpack:FindFirstChild("Gun")
-                            if gun then
-                                local predictedPosition = getPredictedPosition(murderer, shootOffset or 0)
-                                local args = {
-                                    CFrame.new(myHRP.Position),
-                                    CFrame.new(predictedPosition)
-                                }
-                                local shootRemote = gun:FindFirstChild("Shoot")
-                                if shootRemote then
-                                    shootRemote:FireServer(unpack(args))
-                                    fu.notification("LastShoot triggered!")
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end)
-    end
-end
-
-if localplayer.Character then
-    task.spawn(onCharacterAdded, localplayer.Character)
-end
-localplayer.CharacterAdded:Connect(onCharacterAdded)
-
-
+	
+	
 	task.spawn(function()
 		while task.wait(1) do
 			if findSheriff() == localplayer and autoShooting then
@@ -5177,7 +5063,6 @@ localplayer.CharacterAdded:Connect(onCharacterAdded)
 						}
 	
 						localplayer.Character:WaitForChild("Gun"):WaitForChild("Shoot"):FireServer(unpack(args))
-						checkShotAccuracy(murderer, predictedPosition)
 						
 						task.spawn(function()
 							task.wait(0.001)
@@ -5284,30 +5169,6 @@ localplayer.CharacterAdded:Connect(onCharacterAdded)
 	table.insert(module, {
 		Type = "Toggle",
 		NoSave = true,
-		Args = {"WallCheck", function(Self, state)
-			wallCheckEnabled = state
-		end}
-	})
-
-	table.insert(module, {
-		Type = "Toggle",
-		NoSave = true,
-		Args = {"Offset Analytics", function(Self, state)
-			offsetAnalyticsEnabled = state
-		end}
-	})
-
-	table.insert(module, {
-		Type = "Toggle",
-		NoSave = true,
-		Args = {"LastShoot", function(Self, state)
-			lastShootEnabled = state
-		end}
-	})
-
-	table.insert(module, {
-		Type = "Toggle",
-		NoSave = true,
 		Args = {"Hide Gun Macro", function(Self, state)
 			autoHideGun = state
 		end}
@@ -5375,7 +5236,6 @@ localplayer.CharacterAdded:Connect(onCharacterAdded)
 				}
 			end
 			localplayer.Character:WaitForChild("Gun"):WaitForChild("Shoot"):FireServer(unpack(args))
-			if not instakillshoot then checkShotAccuracy(murderer, predictedPosition) end
 	
 			if autoHideGun then
 				task.spawn(function()
