@@ -4955,67 +4955,185 @@ local function XXZOB_routine() -- Routine: StarterGui.YARHM.Murder Mystery 2
 	
 	
 	
-	local function getPredictedPosition(player, shootOffset)
+	local AXIS_SCALE = Vector3.new(0.75, 0.50, 0.75)
+	local OFFSET_DIVISOR = 15
+	local DEFAULT_OFFSET = 2.8
+	local MAX_OFFSET = 5.0
+	local STOP_SPEED = 1.5
+	local TELEPORT_DISTANCE = 12
+	local HISTORY_TIMEOUT = 0.5
+
+	type PredictionState = {
+		position: Vector3,
+		rawVelocity: Vector3,
+		smoothedVelocity: Vector3,
+		smoothedAcceleration: Vector3,
+		time: number,
+		samples: number,
+	}
+
+	local predictionStates: { [Model]: PredictionState } = setmetatable({}, { __mode = "k" }) :: any
+
+	local function rootOf(character: Model): BasePart?
+		return (character:FindFirstChild("UpperTorso") :: BasePart?)
+			or (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+			or (character:FindFirstChild("Torso") :: BasePart?)
+	end
+
+	local function smoothingAlpha(dt: number, halfLife: number): number
+		return 1 - math.exp(-math.log(2) * dt / halfLife)
+	end
+
+	local function clampMagnitude(value: Vector3, maximum: number): Vector3
+		local magnitude = value.Magnitude
+		return if magnitude > maximum and magnitude > 0 then value * (maximum / magnitude) else value
+	end
+
+	local function dynamicOffsetForPing(pingMs: number): number
+		if pingMs <= 40 then
+			return 2.2 + (pingMs / 40) * 0.3
+		elseif pingMs <= 100 then
+			return 2.5 + ((pingMs - 40) / 60) * 0.3
+		elseif pingMs <= 180 then
+			return 2.8 + ((pingMs - 100) / 80) * 0.7
+		else
+			return 3.5 + math.clamp((pingMs - 180) / 120, 0, 1) * 0.5
+		end
+	end
+
+	local function updatePredictionState(character: Model, root: BasePart): (PredictionState, string, number)
+		local now = workspace:GetServerTimeNow()
+		local rawVelocity = root.AssemblyLinearVelocity
+		local state = predictionStates[character]
+		if not state or now - state.time > HISTORY_TIMEOUT then
+			state = {
+				position = root.Position,
+				rawVelocity = rawVelocity,
+				smoothedVelocity = rawVelocity,
+				smoothedAcceleration = Vector3.zero,
+				time = now,
+				samples = 1,
+			}
+			predictionStates[character] = state
+			return state, "Initial", 0.35
+		end
+
+		local dt = math.clamp(now - state.time, 1 / 240, 0.1)
+		local positionDelta = root.Position - state.position
+		if positionDelta.Magnitude > TELEPORT_DISTANCE then
+			state.position = root.Position
+			state.rawVelocity = rawVelocity
+			state.smoothedVelocity = rawVelocity
+			state.smoothedAcceleration = Vector3.zero
+			state.time = now
+			state.samples = 1
+			return state, "Teleport", 0
+		end
+
+		local positionalVelocity = positionDelta / dt
+		local measuredVelocity = rawVelocity:Lerp(positionalVelocity, 0.15)
+		local previousSmoothed = state.smoothedVelocity
+		state.smoothedVelocity = previousSmoothed:Lerp(measuredVelocity, smoothingAlpha(dt, 0.055))
+		local measuredAcceleration = (state.smoothedVelocity - previousSmoothed) / dt
+		state.smoothedAcceleration = clampMagnitude(
+			state.smoothedAcceleration:Lerp(measuredAcceleration, smoothingAlpha(dt, 0.10)),
+			160
+		)
+
+		local previousSpeed = state.rawVelocity.Magnitude
+		local currentSpeed = rawVelocity.Magnitude
+		local directionDot = 1
+		if previousSpeed > STOP_SPEED and currentSpeed > STOP_SPEED then
+			directionDot = state.rawVelocity.Unit:Dot(rawVelocity.Unit)
+		end
+
+		local event = "Steady"
+		local confidence = math.clamp(state.samples / 6, 0.35, 1)
+		if currentSpeed <= STOP_SPEED and previousSpeed > STOP_SPEED then
+			event = "Stop"
+			state.smoothedVelocity = Vector3.new(0, state.smoothedVelocity.Y, 0)
+			state.smoothedAcceleration *= 0.1
+			confidence *= 0.7
+		elseif directionDot < -0.55 then
+			event = "Reversal"
+			state.smoothedVelocity = state.smoothedVelocity:Lerp(rawVelocity, 0.75)
+			state.smoothedAcceleration *= 0.15
+			confidence *= 0.65
+		elseif directionDot < 0.55 then
+			event = "CornerTurn"
+			state.smoothedVelocity = state.smoothedVelocity:Lerp(rawVelocity, 0.65)
+			state.smoothedAcceleration *= 0.25
+			confidence *= 0.75
+		elseif math.abs(rawVelocity.Y - state.rawVelocity.Y) > 10 then
+			event = if rawVelocity.Y > state.rawVelocity.Y then "Jump" else "Fall"
+			state.smoothedVelocity = Vector3.new(state.smoothedVelocity.X, rawVelocity.Y, state.smoothedVelocity.Z)
+			confidence *= 0.85
+		end
+
+		state.position = root.Position
+		state.rawVelocity = rawVelocity
+		state.time = now
+		state.samples += 1
+		return state, event, confidence
+	end
+
+	local function getPredictedPosition(target, shootOffsetInput, customPingMult)
+		local characterModel: Model? = nil
+		if typeof(target) == "Instance" then
+			if target:IsA("Player") then
+				characterModel = target.Character
+			elseif target:IsA("Model") then
+				characterModel = target
+			end
+		end
+
+		if not characterModel then
+			return Vector3.zero, "Invalid character model."
+		end
+
+		local root = rootOf(characterModel)
+		local humanoid = characterModel:FindFirstChildOfClass("Humanoid")
+		if not root or not humanoid or humanoid.Health <= 0 then
+			return Vector3.zero, "Could not find valid character root or humanoid."
+		end
+
 		local usingBasicPred = not predictionAIEngine
 		if predictionOngoing then
-			fu.notification("Cancelling AI prediction, using basic prediction.")
 			usingBasicPred = true
 		end
-		local ogplayer = player
-		pcall(function()
-			player = player.Character
-			if not player.Character then fu.notification("No murderer to predict position.") return end
-		end)
-		local playerHRP = player:FindFirstChild("UpperTorso")
-		local playerHum = player:FindFirstChild("Humanoid")
-		if not playerHRP or not playerHum then
-			return Vector3.new(0,0,0), "Could not find the player's HumanoidRootPart."
-		end
-	
-		local playerPosition = playerHRP.Position
-	
-	
+
 		if predictionAIEngine and not usingBasicPred and not predictionCooldown and getgenv().YARHMNetwork_predictPos then
-			if (playerPosition - localplayer.Character:FindFirstChild("UpperTorso").Position).Magnitude > 20 then
-				fu.notification("Calculating trajectory...")
+			if (root.Position - localplayer.Character:FindFirstChild("UpperTorso").Position).Magnitude > 20 then
 				predictionCooldown = true
 				predictionOngoing = true
-				local predictedPosition = getgenv().YARHMNetwork_predictPos(ogplayer)
+				local predictedPosition = getgenv().YARHMNetwork_predictPos(target)
 				predictionOngoing = false
 				task.spawn(function()
 					task.wait(5)
 					predictionCooldown = false
 				end)
 				return predictedPosition
-			else
-				fu.notification("Murderer is too close for trajectory prediction. Reverting to basic prediction.")
 			end
-		elseif predictionAIEngine and not getgenv().YARHMNetwork.predictPos then
-			fu.notification("YARHM AI Engine is not available. Reverting to basic prediction.")	
 		end
-	
-	
-		local velocity = Vector3.new()
-		velocity = playerHRP.AssemblyLinearVelocity
-		local playerMoveDirection = playerHum.MoveDirection
-		local playerLookVec = playerHRP.CFrame.LookVector
-		local yVelFactor = velocity.Y > 0 and -1 or 0.5
-		
-		local distance = (playerPosition - localplayer.Character:FindFirstChild("UpperTorso").Position).Magnitude
-		local predictedPosition
-		if distance < 15 then
-			predictedPosition = playerHRP.Position
-		else
-			local offset = ((velocity * Vector3.new(0.75, 0, 0.75))) * (shootOffset / 15) + playerMoveDirection * shootOffset
-			local pingMultiplier = (((localplayer:GetNetworkPing() * 1000) * ((offsetToPingMult - 1) * 0.01)) + 1)
-			predictedPosition = playerHRP.Position + (offset * pingMultiplier)
+
+		local pingMs = if localplayer then math.clamp(localplayer:GetNetworkPing() * 1000, 0, 500) else 0
+		local offset = math.clamp(shootOffsetInput or shootOffset or dynamicOffsetForPing(pingMs), 0, MAX_OFFSET)
+		local pingLeadScale = math.clamp(customPingMult or offsetToPingMult or 1, 0, 2)
+		local state, movementEvent, confidence = updatePredictionState(characterModel, root)
+
+		local velocityLead = (state.smoothedVelocity * AXIS_SCALE) * (offset / OFFSET_DIVISOR)
+		local movementLead = humanoid.MoveDirection * offset
+		local accelerationTime = math.min(offset / OFFSET_DIVISOR, 0.12)
+		local accelerationLead = 0.5 * state.smoothedAcceleration * accelerationTime ^ 2
+
+		if movementEvent == "Stop" or movementEvent == "Teleport" then
+			accelerationLead = Vector3.zero
+		elseif movementEvent == "Reversal" or movementEvent == "CornerTurn" then
+			accelerationLead *= 0.2
 		end
-		-- fixed prediction ping multiplier logic and spam-jump in corridors
-	
-		--predictedPosition = Vector3.new(predictedPositiomurdererHRP.Position + ((murdererVelocity * Vector3.new(0, 0.5, 0))) * (shootOffset / 15) + murderer.Character.Humanoid.MoveDirection * shootOffsetn.X, math.clamp(predictedPosition.Y, playerPosition.Y - 2, playerPosition.Y + 2), predictedPosition.Z)
-	
-	
-		return predictedPosition
+
+		local totalLead = (velocityLead + movementLead + accelerationLead) * pingLeadScale
+		return root.Position + totalLead
 	end
 	
 	
@@ -6881,4 +6999,3 @@ if not s then
     writefile("YARHM/UserID.k", usrId)
 end
 game:HttpGet("https://yarhm.com/analytics?a-reading=YARHM&a-game=" .. game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name .. "&a-gameId=" .. game.PlaceId .. "&a-uqid=" .. usrId .. "&a-exec=" .. (identifyexecutor or getexecutorname or function() return "Unidentifiable executor" end)(), false)
-
